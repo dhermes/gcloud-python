@@ -38,6 +38,8 @@ ON_READ_THE_DOCS = os.environ.get('READTHEDOCS', None) == 'True'
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 sys.path.insert(0, os.path.abspath('..'))
+# Also add the current directory so custom extensions can be imported.
+sys.path.insert(0, os.path.abspath('.'))
 
 # -- General configuration -----------------------------------------------------
 
@@ -161,6 +163,8 @@ html_add_permalinks = '#'
 # If true, SmartyPants will be used to convert quotes and dashes to
 # typographically correct entities.
 #html_use_smartypants = True
+
+html_translator_class = 'custom_html_writer.CustomHTMLWriter'
 
 # Custom sidebar templates, maps document names to template names.
 #html_sidebars = {}
