@@ -275,8 +275,9 @@ Running System Tests
   the production services. To run the system tests with the
   ``datastore`` emulator::
 
-   $ tox -e datastore-emulator
-   $ GOOGLE_CLOUD_DISABLE_GRPC=true tox -e datastore-emulator
+   $ cd datastore/
+   $ tox -e emulator
+   $ GOOGLE_CLOUD_DISABLE_GRPC=true tox -e emulator
 
   This also requires that the ``gcloud`` command line tool is
   installed. If you'd like to run them directly (outside of a
@@ -312,8 +313,9 @@ Running System Tests
 
 - To run the system tests with the ``pubsub`` emulator::
 
-   $ tox -e pubsub-emulator
-   $ GOOGLE_CLOUD_DISABLE_GRPC=true tox -e pubsub-emulator
+   $ cd pubsub/
+   $ tox -e emulator
+   $ GOOGLE_CLOUD_DISABLE_GRPC=true tox -e emulator
 
   If you'd like to run them directly (outside of a ``tox`` environment), first
   start the emulator and take note of the process ID::
@@ -337,6 +339,34 @@ Running System Tests
   processes it spawned::
 
    $ kill -- -44444
+
+- To run the system tests with the ``bigtable`` emulator::
+
+   $ cd bigtable/
+   $ tox -e emulator
+
+  If you'd like to run them directly (outside of a ``tox`` environment), first
+  start the emulator and take note of the process ID::
+
+   $ gcloud beta emulators bigtable start 2>&1 > log.txt &
+   [1] 55555
+
+  then determine the environment variables needed to interact with
+  the emulator::
+
+   $ gcloud beta emulators bigtable env-init
+   export BIGTABLE_EMULATOR_HOST=localhost:8542
+
+  using these environment variables run the emulator::
+
+   $ BIGTABLE_EMULATOR_HOST=localhost:8542 \
+   >   python system_tests/run_system_test.py \
+   >   --package=bigtable
+
+  and after completion stop the emulator and any child
+  processes it spawned::
+
+   $ kill -- -55555
 
 Test Coverage
 -------------
