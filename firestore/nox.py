@@ -72,17 +72,37 @@ def system_tests(session, python_version):
     session.virtualenv_dirname = 'sys-' + python_version
 
     # Install all test dependencies, then install this package into the
-    # virutalenv's dist-packages.
-    session.install('mock', 'pytest', *LOCAL_DEPS)
+    # virtualenv's dist-packages.
+    session.install('mock', 'pytest', 'pytest-cov', *LOCAL_DEPS)
     session.install(os.path.join('..', 'test_utils'))
     session.install('.')
 
+    fail_under = 50
+    # Don't collide with standard .coverage used in
+    # ``unit_tests()`` and ``cover()``.
+    env = {'COVERAGE_FILE': '.sys-test-coverage'}
     # Run py.test against the system tests.
-    session.run(
+    args = (
         'py.test',
+        '--cov=google.cloud.firestore',
+        '--cov=google.cloud.firestore_v1beta1',
+        '--cov-config=.coveragerc',
+        '--cov-report=',
+        '--cov-fail-under={:d}'.format(fail_under),
         os.path.join('tests', 'system.py'),
-        *session.posargs
     )
+    args += session.posargs
+    session.run(*args, **{'env': env})
+    # Display the coverage report.
+    session.run(
+        'coverage',
+        'report',
+        '--show-missing',
+        '--fail-under={:d}'.format(fail_under),
+        env=env,
+    )
+    # Erase the coverage files created.
+    session.run('coverage', 'erase', env=env)
 
 
 @nox.session
