@@ -19,6 +19,7 @@ environment:
     - NOX_SESSION: "unit-3.5"
     - NOX_SESSION: "unit-3.6"
     - NOX_SESSION: "unit-3.7"
+    - NOX_SESSION: "unit-pypy3"
     - NOX_SESSION: "docs"
     - NOX_SESSION: "doctest"
 
@@ -26,6 +27,7 @@ install:
   # Packaging requirements
   - py -3.7 -m pip install --upgrade pip setuptools
   - py -3.7 -m pip install --upgrade wheel
+  - if "%NOX_SESSION%"=="unit-pypy3" choco install pypy3
 
   # Install the build dependencies of the project.
   - py -3.7 -m pip install --upgrade nox
