@@ -20,43 +20,52 @@ for the datastore which provides an alternative model for interacting with
 data stored.
 """
 
-import calendar
 import datetime
 import itertools
 import logging
-import os
 import re
 import time
 
-# from google.appengine.api import datastore
-# from google.appengine.api import datastore_errors
-# from google.appengine.api import datastore_types
-# from google.appengine.api import users
+from google.appengine.api import datastore
+from google.appengine.api import datastore_errors
+from google.appengine.api import datastore_types
+from google.appengine.api import users
 
 
-# MultiQuery = datastore.MultiQuery
+MultiQuery = datastore.MultiQuery
 LOG_LEVEL = logging.DEBUG - 1
 _EPOCH = datetime.datetime.utcfromtimestamp(0)
 _EMPTY_LIST_PROPERTY_NAME = "__empty_IN_list__"
+_GQL_TOKENIZE = r"""
+(?:'[^'\n\r]*')+|
+<=|>=|!=|=|<|>|
+:\w+|
+,|
+\*|
+-?\d+(?:\.\d+)?|
+\w+(?:\.\w+)*|
+(?:"[^"\s]+")+|
+\(|\)|
+\S+
+"""
 
 
 def Execute(query_string, *args, **keyword_args):
     """Execute command to parse and run the query.
 
-  Calls the query parser code to build a proto-query which is an
-  unbound query. The proto-query is then bound into a real query and
-  executed.
+    Calls the query parser code to build a proto-query which is an
+    unbound query. The proto-query is then bound into a real query and
+    executed.
 
-  Args:
-    query_string: properly formatted GQL query string.
-    args: rest of the positional arguments used to bind numeric references in
-          the query.
-    keyword_args: dictionary-based arguments (for named parameters).
+    Args:
+        query_string: properly formatted GQL query string.
+        args: rest of the positional arguments used to bind numeric references
+              in the query.
+        keyword_args: dictionary-based arguments (for named parameters).
 
-  Returns:
-    the result of running the query with *args.
-  """
-
+    Returns:
+        the result of running the query with *args.
+    """
     app = keyword_args.pop("_app", None)
     proto_query = GQL(query_string, _app=app)
 
@@ -66,104 +75,90 @@ def Execute(query_string, *args, **keyword_args):
 class GQL(object):
     """A GQL interface to the datastore.
 
-  GQL is a SQL-like language which supports more object-like semantics
-  in a language that is familiar to SQL users. The language supported by
-  GQL will change over time, but will start off with fairly simple
-  semantics.
+    GQL is a SQL-like language which supports more object-like semantics
+    in a language that is familiar to SQL users. The language supported by
+    GQL will change over time, but will start off with fairly simple
+    semantics.
 
-  - reserved words are case insensitive
-  - names are case sensitive
+    - reserved words are case insensitive
+    - names are case sensitive
 
-  The syntax for SELECT is fairly straightforward:
+    The syntax for SELECT is fairly straightforward:
 
-  SELECT [[DISTINCT] <property> [, <property> ...] | * | __key__ ]
-    [FROM <entity>]
-    [WHERE <condition> [AND <condition> ...]]
-    [ORDER BY <property> [ASC | DESC] [, <property> [ASC | DESC] ...]]
-    [LIMIT [<offset>,]<count>]
-    [OFFSET <offset>]
-    [HINT (ORDER_FIRST | FILTER_FIRST | ANCESTOR_FIRST)]
-    [;]
+    SELECT [[DISTINCT] <property> [, <property> ...] | * | __key__ ]
+      [FROM <entity>]
+      [WHERE <condition> [AND <condition> ...]]
+      [ORDER BY <property> [ASC | DESC] [, <property> [ASC | DESC] ...]]
+      [LIMIT [<offset>,]<count>]
+      [OFFSET <offset>]
+      [HINT (ORDER_FIRST | FILTER_FIRST | ANCESTOR_FIRST)]
+      [;]
 
-  <condition> := <property> {< | <= | > | >= | = | != | IN} <value>
-  <condition> := <property> {< | <= | > | >= | = | != | IN} CAST(<value>)
-  <condition> := <property> IN (<value>, ...)
-  <condition> := ANCESTOR IS <entity or key>
+    <condition> := <property> {< | <= | > | >= | = | != | IN} <value>
+    <condition> := <property> {< | <= | > | >= | = | != | IN} CAST(<value>)
+    <condition> := <property> IN (<value>, ...)
+    <condition> := ANCESTOR IS <entity or key>
 
-  Currently the parser is LL(1) because of the simplicity of the grammer
-  (as it is largely predictive with one token lookahead).
+    Currently the parser is LL(1) because of the simplicity of the grammar
+    (as it is largely predictive with one token lookahead).
 
-  The class is implemented using some basic regular expression tokenization
-  to pull out reserved tokens and then the recursive descent parser will act
-  as a builder for the pre-compiled query. This pre-compiled query is then
-  bound to arguments before executing the query.
+    The class is implemented using some basic regular expression tokenization
+    to pull out reserved tokens and then the recursive descent parser will act
+    as a builder for the pre-compiled query. This pre-compiled query is then
+    bound to arguments before executing the query.
 
-  Initially, three parameter passing mechanisms are supported when calling
-  Execute():
+    Initially, three parameter passing mechanisms are supported when calling
+    Execute():
 
-  - Positional parameters
-  Execute('SELECT * FROM Story WHERE Author = :1 AND Date > :2')
-  - Named parameters
-  Execute('SELECT * FROM Story WHERE Author = :author AND Date > :date')
-  - Literals (numbers, strings, booleans, and NULL)
-  Execute('SELECT * FROM Story WHERE Author = \'James\'')
+    - Positional parameters
+    Execute('SELECT * FROM Story WHERE Author = :1 AND Date > :2')
+    - Named parameters
+    Execute('SELECT * FROM Story WHERE Author = :author AND Date > :date')
+    - Literals (numbers, strings, booleans, and NULL)
+    Execute('SELECT * FROM Story WHERE Author = \'James\'')
 
-  Users are also given the option of doing type conversions to other datastore
-  types (e.g. db.Email, db.GeoPt). The language provides a conversion function
-  which allows the caller to express conversions of both literals and
-  parameters. The current conversion operators are:
-  - GEOPT(float, float)
-  - USER(str)
-  - KEY(kind, id/name[, kind, id/name...])
-  - DATETIME(year, month, day, hour, minute, second)
-  - DATETIME('YYYY-MM-DD HH:MM:SS')
-  - DATE(year, month, day)
-  - DATE('YYYY-MM-DD')
-  - TIME(hour, minute, second)
-  - TIME('HH:MM:SS')
+    Users are also given the option of doing type conversions to other
+    datastore types (e.g. db.Email, db.GeoPt). The language provides a
+    conversion function which allows the caller to express conversions of both
+    literals and parameters. The current conversion operators are:
+    - GEOPT(float, float)
+    - USER(str)
+    - KEY(kind, id/name[, kind, id/name...])
+    - DATETIME(year, month, day, hour, minute, second)
+    - DATETIME('YYYY-MM-DD HH:MM:SS')
+    - DATE(year, month, day)
+    - DATE('YYYY-MM-DD')
+    - TIME(hour, minute, second)
+    - TIME('HH:MM:SS')
 
-  We will properly serialize and quote all values.
+    We will properly serialize and quote all values.
 
-  It should also be noted that there are some caveats to the queries that can
-  be expressed in the syntax. The parser will attempt to make these clear as
-  much as possible, but some of the caveats include:
-    - There is no OR operation. In most cases, you should prefer to use IN to
-      express the idea of wanting data matching one of a set of values.
-    - You cannot express inequality operators on multiple different properties
-    - You can only have one != operator per query (related to the previous
-      rule).
-    - The IN and != operators must be used carefully because they can
-      dramatically raise the amount of work done by the datastore. As such,
-      there is a limit on the number of elements you can use in IN statements.
-      This limit is set fairly low. Currently, a max of 30 datastore queries is
-      allowed in a given GQL query. != translates into 2x the number of
-      datastore queries, and IN multiplies by the number of elements in the
-      clause (so having two IN clauses, one with 5 elements, the other with 6
-      will cause 30 queries to occur).
-    - Literals can take the form of basic types or as type-cast literals. On
-      the other hand, literals within lists can currently only take the form of
-      simple types (strings, integers, floats).
+    It should also be noted that there are some caveats to the queries that can
+    be expressed in the syntax. The parser will attempt to make these clear as
+    much as possible, but some of the caveats include:
+      - There is no OR operation. In most cases, you should prefer to use IN to
+        express the idea of wanting data matching one of a set of values.
+      - You cannot express inequality operators on multiple different
+        properties
+      - You can only have one != operator per query (related to the previous
+        rule).
+      - The IN and != operators must be used carefully because they can
+        dramatically raise the amount of work done by the datastore. As such,
+        there is a limit on the number of elements you can use in IN
+        statements. This limit is set fairly low. Currently, a max of 30
+        datastore queries is allowed in a given GQL query. != translates into
+        2x the number of datastore queries, and IN multiplies by the number of
+        elements in the clause (so having two IN clauses, one with 5 elements,
+        the other with 6 will cause 30 queries to occur).
+      - Literals can take the form of basic types or as type-cast literals. On
+        the other hand, literals within lists can currently only take the form
+        of simple types (strings, integers, floats).
 
+    SELECT * will return an iterable set of entities; SELECT __key__ will
+    return an iterable set of Keys.
+    """
 
-  SELECT * will return an iterable set of entities; SELECT __key__ will return
-  an iterable set of Keys.
-  """
-
-    TOKENIZE_REGEX = re.compile(
-        r"""
-    (?:'[^'\n\r]*')+|
-    <=|>=|!=|=|<|>|
-    :\w+|
-    ,|
-    \*|
-    -?\d+(?:\.\d+)?|
-    \w+(?:\.\w+)*|
-    (?:"[^"\s]+")+|
-    \(|\)|
-    \S+
-    """,
-        re.VERBOSE | re.IGNORECASE,
-    )
+    TOKENIZE_REGEX = re.compile(_GQL_TOKENIZE, re.VERBOSE | re.IGNORECASE)
 
     RESERVED_KEYWORDS = (
         frozenset(
@@ -212,18 +207,17 @@ class GQL(object):
     ):
         """Ctor.
 
-    Parses the input query into the class as a pre-compiled query, allowing
-    for a later call to Bind() to bind arguments as defined in the
-    documentation.
+        Parses the input query into the class as a pre-compiled query, allowing
+        for a later call to Bind() to bind arguments as defined in the
+        documentation.
 
-    Args:
-      query_string: properly formatted GQL query string.
-      namespace: the namespace to use for this query.
+        Args:
+            query_string: properly formatted GQL query string.
+            namespace: the namespace to use for this query.
 
-    Raises:
-      datastore_errors.BadQueryError: if the query is not parsable.
-    """
-
+        Raises:
+            datastore_errors.BadQueryError: if the query is not parsable.
+        """
         self.__app = _app
 
         self.__namespace = namespace
@@ -232,7 +226,7 @@ class GQL(object):
 
         self.__symbols = self.TOKENIZE_REGEX.findall(query_string)
         initial_error = None
-        for backwards_compatibility_mode in xrange(
+        for backwards_compatibility_mode in range(
             len(self.RESERVED_KEYWORDS)
         ):
             self.__InitializeParseState()
@@ -251,7 +245,6 @@ class GQL(object):
             raise initial_error
 
     def __InitializeParseState(self):
-
         self._kind = None
         self._keys_only = False
         self.__projection = None
@@ -269,26 +262,27 @@ class GQL(object):
     def Bind(self, args, keyword_args, cursor=None, end_cursor=None):
         """Bind the existing query to the argument list.
 
-    Assumes that the input args are first positional, then a dictionary.
-    So, if the query contains references to :1, :2 and :name, it is assumed
-    that arguments are passed as (:1, :2, dict) where dict contains a mapping
-    [name] -> value.
+        Assumes that the input args are first positional, then a dictionary.
+        So, if the query contains references to :1, :2 and :name, it is assumed
+        that arguments are passed as (:1, :2, dict) where dict contains a
+        mapping [name] -> value.
 
-    Args:
-      args: the arguments to bind to the object's unbound references.
-      keyword_args: dictionary-based arguments (for named parameters).
+        Args:
+            args: the arguments to bind to the object's unbound references.
+            keyword_args: dictionary-based arguments (for named parameters).
 
-    Raises:
-      datastore_errors.BadArgumentError: when arguments are left unbound
-        (missing from the inputs arguments) or when arguments do not match the
-        expected type.
+        Raises:
+            datastore_errors.BadArgumentError: when arguments are left unbound
+              (missing from the inputs arguments) or when arguments do not
+              match the expected type.
 
-    Returns:
-      The bound datastore.Query object. This may take the form of a MultiQuery
-      object if the GQL query will require multiple backend queries to statisfy.
-    """
+        Returns:
+            The bound datastore.Query object. This may take the form of a
+            MultiQuery object if the GQL query will require multiple backend
+            queries to statisfy.
+        """
         num_args = len(args)
-        input_args = frozenset(xrange(num_args))
+        input_args = frozenset(range(num_args))
         used_args = set()
 
         queries = []
@@ -300,7 +294,7 @@ class GQL(object):
         else:
             query_count = 1
 
-        for _ in xrange(query_count):
+        for _ in range(query_count):
             queries.append(
                 datastore.Query(
                     self._kind,
@@ -354,7 +348,6 @@ class GQL(object):
                 query.Order(*tuple(self.__orderings))
 
         if query_count > 1:
-
             return MultiQuery(queries, self.__orderings)
         else:
             return queries[0]
@@ -362,23 +355,23 @@ class GQL(object):
     def EnumerateQueries(self, used_args, args, keyword_args):
         """Create a list of all multi-query filter combinations required.
 
-    To satisfy multi-query requests ("IN" and "!=" filters), multiple queries
-    may be required. This code will enumerate the power-set of all multi-query
-    filters.
+        To satisfy multi-query requests ("IN" and "!=" filters), multiple
+        queries may be required. This code will enumerate the power-set of all
+        multi-query filters.
 
-    Args:
-      used_args: set of used positional parameters (output only variable used in
-        reporting for unused positional args)
-      args: positional arguments referenced by the proto-query in self. This
-        assumes the input is a tuple (and can also be called with a varargs
-        param).
-      keyword_args: dict of keyword arguments referenced by the proto-query in
-        self.
+        Args:
+            used_args: set of used positional parameters (output only variable
+                used in reporting for unused positional args)
+            args: positional arguments referenced by the proto-query in self.
+                This assumes the input is a tuple (and can also be called with
+                a varargs param).
+            keyword_args: dict of keyword arguments referenced by the
+                proto-query in self.
 
-    Returns:
-      A list of maps [(identifier, condition) -> value] of all queries needed
-      to satisfy the GQL query with the given input arguments.
-    """
+        Returns:
+            A list of maps [(identifier, condition) -> value] of all queries
+            needed to satisfy the GQL query with the given input arguments.
+        """
         enumerated_queries = []
 
         for (identifier, condition), value_list in self.__filters.iteritems():
@@ -395,15 +388,15 @@ class GQL(object):
     def __CastError(self, operator, values, error_message):
         """Query building error for type cast operations.
 
-    Args:
-      operator: the failed cast operation
-      values: value list passed to the cast operator
-      error_message: string to emit as part of the 'Cast Error' string.
+        Args:
+            operator: the failed cast operation
+            values: value list passed to the cast operator
+            error_message: string to emit as part of the 'Cast Error' string.
 
-    Raises:
-      BadQueryError and passes on an error message from the caller. Will raise
-      BadQueryError on all calls.
-    """
+        Raises:
+            BadQueryError and passes on an error message from the caller. Will
+            raise BadQueryError on all calls.
+        """
         raise datastore_errors.BadQueryError(
             "Type Cast Error: unable to cast %r with operation %s (%s)"
             % (values, operator.upper(), error_message)
@@ -424,12 +417,15 @@ class GQL(object):
             return None
 
     def __CastKey(self, values):
-        """Cast input values to Key() class using encoded string or tuple list."""
+        """Cast input values to Key() class.
+
+        Does so using encoded string or tuple list.
+        """
         if not len(values) % 2:
             return datastore_types.Key.from_path(
                 _app=self.__app, namespace=self.__namespace, *values
             )
-        elif len(values) == 1 and isinstance(values[0], basestring):
+        elif len(values) == 1 and isinstance(values[0], (bytes, str)):
             return datastore_types.Key(values[0])
         else:
             self.__CastError(
@@ -450,17 +446,19 @@ class GQL(object):
         if len(values) != 1:
             self.__CastError("user", values, "requires one and only one value")
         elif values[0] is None:
-
             self.__CastError("user", values, "must be non-null")
         else:
             return users.User(email=values[0], _auth_domain=self.__auth_domain)
 
     def __EncodeIfNeeded(self, value):
-        """Simple helper function to create an str from possibly unicode strings.
-    Args:
-      value: input string (should pass as an instance of str or unicode).
-    """
-        if isinstance(value, unicode):
+        """Simple helper function to create a str.
+
+        If the ``value`` is a unicode string, will encode it.
+
+        Args:
+            value: input string (should pass as an instance of str or unicode).
+        """
+        if isinstance(value, str):
             return value.encode("utf8")
         else:
             return value
@@ -468,20 +466,18 @@ class GQL(object):
     def __CastDate(self, values):
         """Cast DATE values (year/month/day) from input (to datetime.datetime).
 
-    Casts DATE input values formulated as ISO string or time tuple inputs.
+        Casts DATE input values formulated as ISO string or time tuple inputs.
 
-    Args:
-      values: either a single string with ISO time representation or 3
-              integer valued date tuple (year, month, day).
+        Args:
+            values: either a single string with ISO time representation or 3
+                    integer valued date tuple (year, month, day).
 
-    Returns:
-      datetime.datetime value parsed from the input values.
-    """
-
+        Returns:
+            datetime.datetime value parsed from the input values.
+        """
         if len(values) == 1:
-
             value = self.__EncodeIfNeeded(values[0])
-            if isinstance(value, str):
+            if isinstance(value, bytes):
                 try:
                     time_tuple = time.strptime(value, "%Y-%m-%d")[0:6]
                 except ValueError as err:
@@ -491,10 +487,8 @@ class GQL(object):
                     "DATE", values, "Single input value not a string"
                 )
         elif len(values) == 3:
-
             time_tuple = (values[0], values[1], values[2], 0, 0, 0)
         else:
-
             self.__CastError(
                 "DATE", values, "function takes 1 string or 3 integer values"
             )
@@ -507,20 +501,19 @@ class GQL(object):
     def __CastTime(self, values):
         """Cast TIME values (hour/min/sec) from input (to datetime.datetime).
 
-    Casts TIME input values formulated as ISO string or time tuple inputs.
+        Casts TIME input values formulated as ISO string or time tuple inputs.
 
-    Args:
-      values: either a single string with ISO time representation or 1-4
-              integer valued time tuple (hour), (hour, minute),
-              (hour, minute, second), (hour, minute, second, microsec).
+        Args:
+            values: either a single string with ISO time representation or 1-4
+                    integer valued time tuple (hour), (hour, minute),
+                    (hour, minute, second), (hour, minute, second, microsec).
 
-    Returns:
-      datetime.datetime value parsed from the input values.
-    """
+        Returns:
+            datetime.datetime value parsed from the input values.
+        """
         if len(values) == 1:
-
             value = self.__EncodeIfNeeded(values[0])
-            if isinstance(value, str):
+            if isinstance(value, bytes):
                 try:
                     time_tuple = time.strptime(value, "%H:%M:%S")
                 except ValueError as err:
@@ -528,7 +521,6 @@ class GQL(object):
                 time_tuple = (1970, 1, 1) + time_tuple[3:]
                 time_tuple = time_tuple[0:6]
             elif isinstance(value, int):
-
                 time_tuple = (1970, 1, 1, value)
             else:
                 self.__CastError(
@@ -537,7 +529,6 @@ class GQL(object):
                     "Single input value not a string or integer hour",
                 )
         elif len(values) <= 4:
-
             time_tuple = (1970, 1, 1) + tuple(values)
         else:
             self.__CastError(
@@ -550,21 +541,21 @@ class GQL(object):
             self.__CastError("TIME", values, err)
 
     def __CastDatetime(self, values):
-        """Cast DATETIME values (string or tuple) from input (to datetime.datetime).
+        """Cast DATETIME values (string or tuple) from input.
 
-    Casts DATETIME input values formulated as ISO string or datetime tuple
-    inputs.
+        Casts DATETIME input values formulated as ISO string or datetime tuple
+        inputs.
 
-    Args:
-      values: either a single string with ISO representation or 3-7
-              integer valued time tuple (year, month, day, ...).
+        Args:
+            values: either a single string with ISO representation or 3-7
+                    integer valued time tuple (year, month, day, ...).
 
-    Returns:
-      datetime.datetime value parsed from the input values.
-    """
+        Returns:
+            datetime.datetime value parsed from the input values.
+        """
         if len(values) == 1:
             value = self.__EncodeIfNeeded(values[0])
-            if isinstance(value, str):
+            if isinstance(value, bytes):
                 try:
                     time_tuple = time.strptime(
                         str(value), "%Y-%m-%d %H:%M:%S"
@@ -581,29 +572,28 @@ class GQL(object):
         try:
             return datetime.datetime(*time_tuple)
         except ValueError as err:
-
             self.__CastError("DATETIME", values, err)
 
     def __Operate(self, args, keyword_args, used_args, operator, params):
-        """Create a single output value from params using the operator string given.
+        """Create a single output value from params using ``operator``.
 
-    Args:
-      args,keyword_args: arguments passed in for binding purposes (used in
-          binding positional and keyword based arguments).
-      used_args: set of numeric arguments accessed in this call.
-          values are ints representing used zero-based positional arguments.
-          used as an output parameter with new used arguments appended to the
-          list.
-      operator: string representing the operator to use 'nop' just returns
-          the first value from params.
-      params: parameter list to operate on (positional references, named
-          references, or literals).
+        Args:
+            args: positional arguments passed in for binding purposes.
+            keyword_args: keyword arguments passed in for binding purposes.
+            used_args: set of numeric arguments accessed in this call.
+                values are ints representing used zero-based positional
+                arguments. used as an output parameter with new used arguments
+                appended to the list.
+            operator: string representing the operator to use 'nop' just
+                returns the first value from params.
+            params: parameter list to operate on (positional references, named
+                references, or literals).
 
-    Returns:
-      A value which can be used as part of a GQL filter description (either a
-      list of datastore types -- for use with IN, or a single datastore type --
-      for use with other filters).
-    """
+        Returns:
+            A value which can be used as part of a GQL filter description
+            (either a list of datastore types -- for use with IN, or a single
+            datastore type -- for use with other filters).
+        """
         if not params:
             return None
 
@@ -640,34 +630,34 @@ class GQL(object):
         return result
 
     def __IsMultiQuery(self, condition):
-        """Return whether or not this condition could require multiple queries."""
+        """Indicate if this condition could require multiple queries."""
         return condition.lower() in ("in", "!=")
 
     def __GetParam(self, param, args, keyword_args, used_args=None):
         """Get the specified parameter from the input arguments.
 
-    If param is an index or named reference, args and keyword_args are used. If
-    param is a cast operator tuple, will use __Operate to return the cast value.
+        If param is an index or named reference, args and keyword_args are
+        used. If param is a cast operator tuple, will use __Operate to return
+        the cast value.
 
-    Args:
-      param: represents either an id for a filter reference in the filter list
-          (string or number) or a tuple (cast operator, params)
-      args: positional args passed in by the user (tuple of arguments, indexed
-          numerically by "param")
-      keyword_args: dict of keyword based arguments (strings in "param")
-      used_args: Index arguments passed from __Operate to determine which index
-          references have been used. Default is None.
+        Args:
+            param: represents either an id for a filter reference in the filter
+                list (string or number) or a tuple (cast operator, params)
+            args: positional args passed in by the user (tuple of arguments,
+                indexed numerically by "param")
+            keyword_args: dict of keyword based arguments (strings in "param")
+            used_args: Index arguments passed from __Operate to determine which
+                index references have been used. Default is None.
 
-    Returns:
-      The specified param from the input list.
+        Returns:
+            The specified param from the input list.
 
-    Raises:
-      BadArgumentError: if the referenced argument doesn't exist or no type cast
-      operator is present.
-    """
+        Raises:
+            BadArgumentError: if the referenced argument doesn't exist or no
+            type cast operator is present.
+        """
         num_args = len(args)
         if isinstance(param, int):
-
             if param <= num_args:
                 return args[param - 1]
             else:
@@ -675,7 +665,7 @@ class GQL(object):
                     "Missing argument for bind, requires argument #%i, "
                     "but only has %i args." % (param, num_args)
                 )
-        elif isinstance(param, basestring):
+        elif isinstance(param, (bytes, str)):
             if param in keyword_args:
                 return keyword_args[param]
             else:
@@ -689,49 +679,50 @@ class GQL(object):
                 args, keyword_args, used_args, cast_op, params
             )
         else:
-
             assert False, "Unknown parameter %s" % param
 
     def __AddMultiQuery(
         self, identifier, condition, value, enumerated_queries
     ):
-        """Helper function to add a multi-query to previously enumerated queries.
+        """Add a multi-query to previously enumerated queries.
 
-    Args:
-      identifier: property being filtered by this condition
-      condition: filter condition (e.g. !=,in)
-      value: value being bound
-      enumerated_queries: in/out list of already bound queries -> expanded list
-        with the full enumeration required to satisfy the condition query
-    Raises:
-      BadArgumentError if the filter is invalid (namely non-list with IN)
-    """
+        Args:
+            identifier: property being filtered by this condition
+            condition: filter condition (e.g. !=,in)
+            value: value being bound
+            enumerated_queries: in/out list of already bound queries ->
+                expanded list with the full enumeration required to satisfy
+                the condition query
+
+        Raises:
+            BadArgumentError if the filter is invalid (namely non-list with IN)
+        """
         if condition.lower() in ("!=", "in") and self._keys_only:
             raise datastore_errors.BadQueryError(
                 "Keys only queries do not support IN or != filters."
             )
 
         def CloneQueries(queries, n):
-            """Do a full copy of the queries and append to the end of the queries.
+            """Full copy of the queries and append to the end of the queries.
 
-      Does an in-place replication of the input list and sorts the result to
-      put copies next to one-another.
+            Does an in-place replication of the input list and sorts the result
+            to put copies next to one-another.
 
-      Args:
-        queries: list of all filters to clone
-        n: number of copies to make
+            Args:
+                queries: list of all filters to clone
+                n: number of copies to make
 
-      Returns:
-        Number of iterations needed to fill the structure
-      """
+            Returns:
+                Number of iterations needed to fill the structure
+            """
             if not enumerated_queries:
-                for _ in xrange(n):
+                for _ in range(n):
                     queries.append({})
                 return 1
             else:
                 old_size = len(queries)
                 tmp_queries = []
-                for _ in xrange(n - 1):
+                for _ in range(n - 1):
                     [
                         tmp_queries.append(filter_map.copy())
                         for filter_map in queries
@@ -747,7 +738,7 @@ class GQL(object):
                 )
 
             num_iterations = CloneQueries(enumerated_queries, 2)
-            for i in xrange(num_iterations):
+            for i in range(num_iterations):
                 enumerated_queries[2 * i]["%s <" % identifier] = value
                 enumerated_queries[2 * i + 1]["%s >" % identifier] = value
         elif condition.lower() == "in":
@@ -766,18 +757,16 @@ class GQL(object):
                 )
 
             if in_list_size == 0:
-
                 num_iterations = CloneQueries(enumerated_queries, 1)
-                for clone_num in xrange(num_iterations):
-
+                for clone_num in range(num_iterations):
                     enumerated_queries[clone_num][
                         _EMPTY_LIST_PROPERTY_NAME
                     ] = True
                 return
 
             num_iterations = CloneQueries(enumerated_queries, in_list_size)
-            for clone_num in xrange(num_iterations):
-                for value_num in xrange(len(value)):
+            for clone_num in range(num_iterations):
+                for value_num in range(len(value)):
                     list_val = value[value_num]
                     query_num = in_list_size * clone_num + value_num
                     filt = "%s =" % identifier
@@ -786,13 +775,12 @@ class GQL(object):
     def __AddFilterToQuery(self, identifier, condition, value, query):
         """Add a filter condition to a query based on the inputs.
 
-    Args:
-      identifier: name of the property (or self.__ANCESTOR for ancestors)
-      condition: test condition
-      value: test value passed from the caller
-      query: query to add the filter to
-    """
-
+        Args:
+            identifier: name of the property (or self.__ANCESTOR for ancestors)
+            condition: test condition
+            value: test value passed from the caller
+            query: query to add the filter to
+        """
         if identifier != self.__ANCESTOR:
             filter_condition = "%s %s" % (identifier, condition)
             logging.log(
@@ -802,7 +790,6 @@ class GQL(object):
                 value.__class__,
             )
             datastore._AddOrAppend(query, filter_condition, value)
-
         else:
             logging.log(
                 LOG_LEVEL, "Setting ancestor query for ancestor %s", value
@@ -812,18 +799,18 @@ class GQL(object):
     def Run(self, *args, **keyword_args):
         """Runs this query.
 
-    Similar to datastore.Query.Run.
-    Assumes that limit == -1 or > 0
+        Similar to datastore.Query.Run.
+        Assumes that limit == -1 or > 0
 
-    Args:
-      args: arguments used to bind to references in the compiled query object.
-      keyword_args: dictionary-based arguments (for named parameters).
+        Args:
+            args: arguments used to bind to references in the compiled query
+                object.
+            keyword_args: dictionary-based arguments (for named parameters).
 
-    Returns:
-      A list of results if a query count limit was passed.
-      A result iterator if no limit was given.
-    """
-
+        Returns:
+            A list of results if a query count limit was passed.
+            A result iterator if no limit was given.
+        """
         bind_results = self.Bind(args, keyword_args)
 
         offset = self.offset()
@@ -832,7 +819,7 @@ class GQL(object):
             it = bind_results.Run()
 
             try:
-                for _ in xrange(offset):
+                for _ in range(offset):
                     it.next()
             except StopIteration:
                 pass
@@ -867,7 +854,10 @@ class GQL(object):
         return self.__orderings
 
     def is_keys_only(self):
-        """Returns True if this query returns Keys, False if it returns Entities."""
+        """Indicates if keys-only.
+
+        Returns True if this query returns Keys, False if it returns Entities.
+        """
         return self._keys_only
 
     def projection(self):
@@ -914,13 +904,13 @@ class GQL(object):
     def __Error(self, error_message):
         """Generic query error.
 
-    Args:
-      error_message: string to emit as part of the 'Parse Error' string.
+        Args:
+            error_message: string to emit as part of the 'Parse Error' string.
 
-    Raises:
-      BadQueryError and passes on an error message from the caller. Will raise
-      BadQueryError on all calls to __Error()
-    """
+        Raises:
+            BadQueryError and passes on an error message from the caller. Will
+            raise BadQueryError on all calls to __Error()
+        """
         if self.__next_symbol >= len(self.__symbols):
             raise datastore_errors.BadQueryError(
                 "Parse Error: %s at end of string" % error_message
@@ -932,7 +922,10 @@ class GQL(object):
             )
 
     def __Accept(self, symbol_string):
-        """Advance the symbol and return true iff the next symbol matches input."""
+        """Advance the symbol.
+
+        Return true iff the next symbol matches input.
+        """
         if self.__next_symbol < len(self.__symbols):
             logging.log(LOG_LEVEL, "\t%s", self.__symbols)
             logging.log(
@@ -947,28 +940,29 @@ class GQL(object):
         return False
 
     def __Expect(self, symbol_string):
-        """Require that the next symbol matches symbol_string, or emit an error.
+        """Require that next symbol matches symbol_string, or emit an error.
 
-    Args:
-      symbol_string: next symbol expected by the caller
+        Args:
+            symbol_string: next symbol expected by the caller
 
-    Raises:
-      BadQueryError if the next symbol doesn't match the parameter passed in.
-    """
+        Raises:
+            BadQueryError if the next symbol doesn't match the parameter
+            passed in.
+        """
         if not self.__Accept(symbol_string):
             self.__Error("Unexpected Symbol: %s" % symbol_string)
 
     def __AcceptRegex(self, regex):
         """Advance and return the symbol if the next symbol matches the regex.
 
-    Args:
-      regex: the compiled regular expression to attempt acceptance on.
+        Args:
+            regex: the compiled regular expression to attempt acceptance on.
 
-    Returns:
-      The first group in the expression to allow for convenient access
-      to simple matches. Requires () around some objects in the regex.
-      None if no match is found.
-    """
+        Returns:
+            The first group in the expression to allow for convenient access
+            to simple matches. Requires () around some objects in the regex.
+            None if no match is found.
+        """
         if self.__next_symbol < len(self.__symbols):
             match_symbol = self.__symbols[self.__next_symbol]
             logging.log(
@@ -988,13 +982,12 @@ class GQL(object):
     def __AcceptTerminal(self):
         """Accept either a single semi-colon or an empty string.
 
-    Returns:
-      True
+        Returns:
+            True
 
-    Raises:
-      BadQueryError if there are unconsumed symbols in the query.
-    """
-
+        Raises:
+            BadQueryError if there are unconsumed symbols in the query.
+        """
         self.__Accept(";")
 
         if self.__next_symbol < len(self.__symbols):
@@ -1004,12 +997,12 @@ class GQL(object):
     def __Select(self):
         """Consume the SELECT clause and everything that follows it.
 
-    Assumes SELECT * to start.
-    Transitions to a FROM clause.
+        Assumes SELECT * to start.
+        Transitions to a FROM clause.
 
-    Returns:
-      True if parsing completed okay.
-    """
+        Returns:
+            True if parsing completed OK.
+        """
         self.__Expect("SELECT")
         if "DISTINCT" in self.__active_reserved_words and self.__Accept(
             "DISTINCT"
@@ -1028,13 +1021,13 @@ class GQL(object):
     def __From(self):
         """Consume the FROM clause.
 
-    Assumes a single well formed entity in the clause.
-    Assumes FROM <Entity Name>
-    Transitions to a WHERE clause.
+        Assumes a single well formed entity in the clause.
+        Assumes FROM <Entity Name>
+        Transitions to a WHERE clause.
 
-    Returns:
-      True if parsing completed okay.
-    """
+        Returns:
+            True if parsing completed OK.
+        """
         if self.__Accept("FROM"):
             self._kind = self.__ExpectIdentifier()
         return self.__Where()
@@ -1042,12 +1035,12 @@ class GQL(object):
     def __Where(self):
         """Consume the WHERE cluase.
 
-    These can have some recursion because of the AND symbol.
+        These can have some recursion because of the AND symbol.
 
-    Returns:
-      True if parsing the WHERE clause completed correctly, as well as all
-      subsequent clauses
-    """
+        Returns:
+          True if parsing the WHERE clause completed correctly, as well as all
+          subsequent clauses
+        """
         if self.__Accept("WHERE"):
             return self.__FilterList()
         return self.__OrderBy()
@@ -1085,25 +1078,26 @@ class GQL(object):
     def __GetValueList(self, values_intended_for_list=False):
         """Read in a list of parameters from the tokens and return the list.
 
-    Reads in a set of tokens by consuming symbols. If the returned list of
-    values is not intended to be used within a list, only accepts literals,
-    positional parameters, or named parameters. If the returned list of
-    values is intended to be used within a list, also accepts values
-    (cast operator, params) which represent a custom GAE Type and are
-    returned by __TypeCast.
+        Reads in a set of tokens by consuming symbols. If the returned list of
+        values is not intended to be used within a list, only accepts literals,
+        positional parameters, or named parameters. If the returned list of
+        values is intended to be used within a list, also accepts values
+        (cast operator, params) which represent a custom GAE Type and are
+        returned by __TypeCast.
 
-    Args:
-      values_intended_for_list: Boolean to determine if the returned value list
-          is intended to be used as values in a list or as values in a custom
-          GAE Type. Defaults to False.
+        Args:
+            values_intended_for_list: Boolean to determine if the returned
+                value list is intended to be used as values in a list or as
+                values in a custom GAE Type. Defaults to False.
 
-    Returns:
-      A list of values parsed from the input, with values taking the form of
-      strings (unbound, named reference), integers (unbound, positional
-      reference), Literal() (bound value usable directly as part of a filter
-      with no additional information), or a tuple (cast operator, params)
-      representing a custom GAE Type. Or empty list if nothing was parsed.
-    """
+        Returns:
+            A list of values parsed from the input, with values taking the form
+            of strings (unbound, named reference), integers (unbound,
+            positional reference), Literal() (bound value usable directly as
+            part of a filter with no additional information), or a tuple
+            (cast operator, params) representing a custom GAE Type. Or empty
+            list if nothing was parsed.
+        """
         params = []
 
         while True:
@@ -1135,19 +1129,18 @@ class GQL(object):
     def __CheckFilterSyntax(self, identifier, condition):
         """Check that filter conditions are valid and throw errors if not.
 
-    Args:
-      identifier: identifier being used in comparison
-      condition: string form of the comparison operator used in the filter
-    """
+        Args:
+            identifier: identifier being used in comparison
+            condition: string form of the comparison operator used in the
+                filter
+        """
         if identifier.lower() == "ancestor":
             if condition.lower() == "is":
-
                 if self.__has_ancestor:
                     self.__Error('Only one ANCESTOR IS" clause allowed')
             else:
                 self.__Error('"IS" expected to follow "ANCESTOR"')
         elif condition.lower() == "is":
-
             self.__Error(
                 '"IS" can only be used when comparing against "ANCESTOR"'
             )
@@ -1157,17 +1150,20 @@ class GQL(object):
     ):
         """Add a filter with post-processing required.
 
-    Args:
-      identifier: property being compared.
-      condition: comparison operation being used with the property (e.g. !=).
-      operator: operation to perform on the parameters before adding the filter.
-      parameters: list of bound parameters passed to 'operator' before creating
-          the filter. When using the parameters as a pass-through, pass 'nop'
-          into the operator field and the first value will be used unprocessed).
+        Args:
+            identifier: property being compared.
+            condition: comparison operation being used with the property
+                (e.g. !=).
+            operator: operation to perform on the parameters before adding the
+                filter.
+            parameters: list of bound parameters passed to 'operator' before
+                creating the filter. When using the parameters as a
+                pass-through, pass 'nop' into the operator field and the first
+                value will be used unprocessed).
 
-    Returns:
-      True if the filter was okay to add.
-    """
+        Returns:
+            True if the filter was OK to add.
+        """
         if parameters is None:
             return False
         if parameters[0] is None:
@@ -1195,17 +1191,21 @@ class GQL(object):
         return True
 
     def __AddSimpleFilter(self, identifier, condition, parameter):
-        """Add a filter to the query being built (no post-processing on parameter).
+        """Add a filter to the query being built.
 
-    Args:
-      identifier: identifier being used in comparison
-      condition: string form of the comparison operator used in the filter
-      parameter: ID of the reference being made or a value of type Literal
+        Does no post-processing on parameter.
 
-    Returns:
-      True if the filter could be added.
-      False otherwise.
-    """
+        Args:
+            identifier: identifier being used in comparison
+            condition: string form of the comparison operator used in the
+                filter
+            parameter: ID of the reference being made or a value of type
+                Literal
+
+        Returns:
+            True if the filter could be added.
+            False otherwise.
+        """
         return self.__AddProcessedParameterFilter(
             identifier, condition, "nop", [parameter]
         )
@@ -1213,9 +1213,10 @@ class GQL(object):
     def __Identifier(self):
         """Consume an identifier and return it.
 
-    Returns:
-      The identifier string. If quoted, the surrounding quotes are stripped.
-    """
+        Returns:
+            The identifier string. If quoted, the surrounding quotes are
+            stripped.
+        """
         logging.log(LOG_LEVEL, "Try Identifier")
         identifier = self.__AcceptRegex(self.__identifier_regex)
         if identifier:
@@ -1223,10 +1224,8 @@ class GQL(object):
                 self.__next_symbol -= 1
                 self.__Error("Identifier is a reserved keyword")
         else:
-
             identifier = self.__AcceptRegex(self.__quoted_identifier_regex)
             if identifier:
-
                 identifier = identifier[1:-1].replace('""', '"')
         return identifier
 
@@ -1239,17 +1238,16 @@ class GQL(object):
     def __Reference(self):
         """Consume a parameter reference and return it.
 
-    Consumes a reference to a positional parameter (:1) or a named parameter
-    (:email). Only consumes a single reference (not lists).
+        Consumes a reference to a positional parameter (:1) or a named
+        parameter (:email). Only consumes a single reference (not lists).
 
-    Returns:
-      The name of the reference (integer for positional parameters or string
-      for named parameters) to a bind-time parameter.
-    """
+        Returns:
+            The name of the reference (integer for positional parameters or
+            string for named parameters) to a bind-time parameter.
+        """
         logging.log(LOG_LEVEL, "Try Reference")
         reference = self.__AcceptRegex(self.__ordinal_regex)
         if reference:
-
             return int(reference)
         else:
             reference = self.__AcceptRegex(self.__named_regex)
@@ -1261,10 +1259,10 @@ class GQL(object):
     def __Literal(self):
         """Parse literals from our token list.
 
-    Returns:
-      The parsed literal from the input string (currently either a string,
-      integer, or floating point value).
-    """
+        Returns:
+            The parsed literal from the input string (currently either a
+            string, integer, or floating point value).
+        """
         logging.log(LOG_LEVEL, "Try Literal")
 
         literal = None
@@ -1286,13 +1284,11 @@ class GQL(object):
                     self.__next_symbol += 1
 
         if literal is None:
-
             literal = self.__AcceptRegex(self.__quoted_string_regex)
             if literal:
                 literal = literal[1:-1].replace("''", "'")
 
         if literal is None:
-
             if self.__Accept("TRUE"):
                 literal = True
             elif self.__Accept("FALSE"):
@@ -1307,31 +1303,32 @@ class GQL(object):
             return None
 
     def __TypeCast(self, can_cast_list=True):
-        """Check if the next operation is a type-cast and return the cast if so.
+        """Check if the next operation is a type-cast.
 
-    Casting operators look like simple function calls on their parameters. This
-    code returns the cast operator found and the list of parameters provided by
-    the user to complete the cast operation.
+        Return the cast if so.
 
-    In the case of a list, we allow the call to __GetValueList to also accept
-    custom GAE Types as values.
+        Casting operators look like simple function calls on their parameters.
+        This code returns the cast operator found and the list of parameters
+        provided by the user to complete the cast operation.
 
-    Args:
-      can_cast_list: Boolean to determine if list can be returned as one of the
-          cast operators. Default value is True.
+        In the case of a list, we allow the call to __GetValueList to also
+        accept custom GAE Types as values.
 
-    Returns:
-      A tuple (cast operator, params) which represents the cast operation
-      requested and the parameters parsed from the cast clause.
+        Args:
+            can_cast_list: Boolean to determine if list can be returned as one
+                of the cast operators. Default value is True.
 
-      None - if there is no TypeCast function or list is not allowed to be cast.
-    """
+        Returns:
+            A tuple (cast operator, params) which represents the cast operation
+            requested and the parameters parsed from the cast clause.
 
+            None - if there is no TypeCast function or list is not allowed to
+            be cast.
+        """
         logging.log(LOG_LEVEL, "Try Type Cast")
         cast_op = self.__AcceptRegex(self.__cast_regex)
         if not cast_op:
             if can_cast_list and self.__Accept("("):
-
                 cast_op = "list"
             else:
                 return None
@@ -1362,7 +1359,6 @@ class GQL(object):
 
     def __OrderList(self):
         """Consume variables and sort order for ORDER BY clause."""
-
         identifier = self.__Identifier()
         if identifier:
             if self.__Accept("DESC"):
@@ -1388,15 +1384,12 @@ class GQL(object):
     def __Limit(self):
         """Consume the LIMIT clause."""
         if self.__Accept("LIMIT"):
-
             maybe_limit = self.__AcceptRegex(self.__number_regex)
 
             if maybe_limit:
-
                 if self.__Accept(","):
                     self.__offset = int(maybe_limit)
                     if self.__offset < 0:
-
                         self.__Error("Bad offset in LIMIT Value")
                     else:
                         logging.log(
@@ -1406,7 +1399,6 @@ class GQL(object):
 
                 self.__limit = int(maybe_limit)
                 if self.__limit < 1:
-
                     self.__Error("Bad Limit in LIMIT Value")
                 else:
                     logging.log(LOG_LEVEL, "Set limit to %i", self.__limit)
@@ -1424,10 +1416,8 @@ class GQL(object):
             offset = self.__AcceptRegex(self.__number_regex)
 
             if offset:
-
                 self.__offset = int(offset)
                 if self.__offset < 0:
-
                     self.__Error("Bad offset in OFFSET clause")
                 else:
                     logging.log(LOG_LEVEL, "Set offset to %i", self.__offset)
@@ -1439,14 +1429,14 @@ class GQL(object):
     def __Hint(self):
         """Consume the HINT clause.
 
-    Requires one of three options (mirroring the rest of the datastore):
-      HINT ORDER_FIRST
-      HINT ANCESTOR_FIRST
-      HINT FILTER_FIRST
+        Requires one of three options (mirroring the rest of the datastore):
+          HINT ORDER_FIRST
+          HINT ANCESTOR_FIRST
+          HINT FILTER_FIRST
 
-    Returns:
-      True if the hint clause and later clauses all parsed okay
-    """
+        Returns:
+            True if the hint clause and later clauses all parsed OK
+        """
         if self.__Accept("HINT"):
             if self.__Accept("ORDER_FIRST"):
                 self.__hint = "ORDER_FIRST"
@@ -1463,10 +1453,10 @@ class GQL(object):
 
 
 class Literal(object):
-    """Class for representing literal values in a way unique from unbound params.
+    """Represent literal values in a way unique from unbound params.
 
-  This is a simple wrapper class around basic types and datastore types.
-  """
+    This is a simple wrapper class around basic types and datastore types.
+    """
 
     def __init__(self, value):
         self.__value = value
