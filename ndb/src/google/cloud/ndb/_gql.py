@@ -1467,3 +1467,19 @@ class Literal(object):
 
     def __repr__(self):
         return "Literal(%s)" % repr(self.__value)
+
+# google/appengine/ext/ndb/
+# query.py:335:    gqli = gql.GQL('SELECT * FROM Dummy')
+# query.py:336:    gql_method = gqli._GQL__cast_operators[func]
+# query.py:337:    self.__method = getattr(gqli, '_GQL' + gql_method.__name__)
+# query.py:716:    elif isinstance(arg, gql.Literal):
+# query.py:1529:  gql_qry = gql.GQL(query_string)
+# query.py:1530:  kind = gql_qry.kind()
+# query.py:1543:  flt = gql_qry.filters()
+# query.py:1549:    if op == 'is' and name == gql.GQL._GQL__ANCESTOR:
+# query.py:1575:  orders = _orderings_to_orders(gql_qry.orderings(), modelclass)
+# query.py:1576:  offset = gql_qry.offset()
+# query.py:1577:  limit = gql_qry.limit()
+# query.py:1580:  keys_only = gql_qry._keys_only
+# query.py:1584:  projection = gql_qry.projection()
+# query.py:1585:  if gql_qry.is_distinct():
